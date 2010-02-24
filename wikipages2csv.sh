@@ -22,7 +22,7 @@
 ##### CONFIGURE HERE ########
 
 # The prefix to append to generated links. NO SPACES!
-WS_URI_PREFIX=http://my-server.example.com/groups/wiki/
+WS_HOST_URI=http://my-server.example.com/
 
 ##### END CONFIGURATION #####
 # DO NOT EDIT PAST THIS LINE
@@ -33,8 +33,14 @@ WS_PAGE_IDS_FILE=`mktemp ws-ids.tmp.XXXXXX`
 
 function extractPlistValueByKey () {
     head -n \
-      $(expr 1 + `grep -n "<key>$1</key>" page.plist | cut -d ':' -f 1`) page.plist | \
+      $(expr 1 + `grep -n "<key>$2</key>" $1 | cut -d ':' -f 1`) $1 | \
         tail -n 1 | cut -d '>' -f 2 | cut -d '<' -f 1
+}
+
+function extractPlistBoolByKey () {
+    head -n \
+      $(expr 1 + `grep -n "<key>$2</key>" $1 | cut -d ':' -f 1`) $1 | \
+        tail -n 1 | sed -e 's/[^a-z]//g'
 }
 
 function linkifyWikiServerTitle () {
@@ -54,17 +60,22 @@ function csvQuote () {
     fi
 }
 
-ls -d [^w]*.page | \
-  sed -e 's/^\([a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9]\)\.page$/\1/' > $WS_PAGE_IDS_FILE
+function plistToCSV () {
+    title="$(extractPlistValueByKey $1 title)"
+    created_date="$(formatISO8601date $(extractPlistValueByKey $1 createdDate))"
+    modified_date="$(formatISO8601date $(extractPlistValueByKey $1 modifiedDate))"
+    tombstoned="$(extractPlistBoolByKey $1 tombstoned)"
+    uid="$(extractPlistValueByKey $1 uid)"
+    link=$WS_HOST_URI"$uid"/`linkifyWikiServerTitle "$title"`.html
+    echo `csvQuote "$title"`,$uid,$tombstoned,$created_date,$modified_date,`csvQuote "$link"` 
+}
 
-echo "Title,ID,Date Created,Last Modified,URI" > $WS_CSV_OUTFILE
+ls -d [^w]*.page | \
+    sed -e 's/^\([a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9]\)\.page$/\1/' > $WS_PAGE_IDS_FILE
+
+echo "Title,UID,Deleted,Date Created,Last Modified,URI" > $WS_CSV_OUTFILE
 while read id; do
-    cd $id.page
-    title="$(extractPlistValueByKey title)"
-    created_date="$(formatISO8601date $(extractPlistValueByKey createdDate))"
-    modified_date="$(formatISO8601date $(extractPlistValueByKey modifiedDate))"
-    link=$WS_URI_PREFIX"$id"/`linkifyWikiServerTitle "$title"`.html
-    cd ..
-    echo `csvQuote "$title"`,$id,$created_date,$modified_date,`csvQuote "$link"` >> $WS_CSV_OUTFILE
+    plist_file="$id.page/page.plist"
+    echo "$(plistToCSV $plist_file)" >> $WS_CSV_OUTFILE
 done < $WS_PAGE_IDS_FILE
 rm $WS_PAGE_IDS_FILE
